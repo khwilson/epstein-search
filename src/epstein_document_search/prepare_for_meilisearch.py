@@ -108,8 +108,9 @@ def process_file(filepath, base_path):
 
 def main():
     """Main function to process all txt files and generate JSON output."""
-    base_path = Path(__file__).parent
-    output_file = base_path / "meilisearch_documents.json"
+    import sys
+    base_path = Path(sys.argv[1])
+    output_file = Path(sys.argv[2])
 
     print(f"Scanning directory: {base_path}")
     print("Finding all .txt files...")

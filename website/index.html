@@ -191,18 +191,77 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
     <script>
-        // Configure these values for your Meilisearch instance
-        const MEILISEARCH_HOST = 'YOUR_MEILISEARCH_HOST'; // e.g., 'https://ms-xxxxx.meilisearch.io'
-        const MEILISEARCH_API_KEY = 'YOUR_SEARCH_API_KEY'; // Use search-only API key, not admin key
-        const INDEX_NAME = 'epstein';
+        // Configuration
+        const DATA_FILE = 'documents.json'; // Path to your JSON data file
 
-        // Track current search state
-        let currentQuery = '';
-        let currentFolder = '';
+        // Global variables
+        let documentsData = [];
+        let fuse = null;
+        let currentSearchResults = [];
         let currentOffset = 0;
         let currentLimit = 25;
-        let totalHits = 0;
+        let isLoading = false;
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadData();
+        });
+
+        async function loadData() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p class="loading">Loading document data...</p>';
+
+            try {
+                const response = await fetch(DATA_FILE);
+                if (!response.ok) {
+                    throw new Error(`Failed to load data: ${response.statusText}`);
+                }
+
+                documentsData = await response.json();
+                console.log(`Loaded ${documentsData.length} documents`);
+
+                // Initialize Fuse.js for fuzzy search
+                fuse = new Fuse(documentsData, {
+                    keys: ['content', 'document_id', 'case_number'],
+                    threshold: 0.4,
+                    includeScore: true,
+                    includeMatches: true,
+                    minMatchCharLength: 2,
+                    ignoreLocation: true,
+                });
+
+                // Populate folder filter dynamically
+                populateFolderFilter();
+
+                resultsDiv.innerHTML = '<p class="loading">Data loaded! Enter a search query to get started.</p>';
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="result-item">
+                        <p style="color: red;">Error loading data: ${error.message}</p>
+                        <p style="margin-top: 10px;">Make sure the JSON file is available at: ${DATA_FILE}</p>
+                        <p style="margin-top: 10px; font-size: 12px;">You may need to run the prepare_for_meilisearch.py script first to generate the JSON file.</p>
+                    </div>
+                `;
+            }
+        }
+
+        function populateFolderFilter() {
+            const folders = [...new Set(documentsData.map(doc => doc.folder))].sort();
+            const folderFilter = document.getElementById('folderFilter');
+
+            // Clear existing options except "All Folders"
+            folderFilter.innerHTML = '<option value="">All Folders</option>';
+
+            // Add folders dynamically
+            folders.forEach(folder => {
+                const option = document.createElement('option');
+                option.value = folder;
+                option.textContent = `Folder ${folder}`;
+                folderFilter.appendChild(option);
+            });
+        }
 
         // Search on Enter key
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
@@ -211,17 +270,14 @@
             }
         });
 
-        async function search(append = false) {
+        function search(append = false) {
             const query = document.getElementById('searchInput').value.trim();
             const folder = document.getElementById('folderFilter').value;
-            const limit = document.getElementById('limitFilter').value;
+            const limit = parseInt(document.getElementById('limitFilter').value);
 
-            // If new search, reset offset
-            if (!append) {
-                currentQuery = query;
-                currentFolder = folder;
-                currentLimit = parseInt(limit);
-                currentOffset = 0;
+            if (!fuse) {
+                document.getElementById('results').innerHTML = '<p class="loading">Still loading data...</p>';
+                return;
             }
 
             if (!query) {
@@ -230,63 +286,77 @@
                 return;
             }
 
+            // If new search, reset offset
+            if (!append) {
+                currentOffset = 0;
+                currentLimit = limit;
+            }
+
             if (!append) {
                 document.getElementById('results').innerHTML = '<p class="loading">Searching...</p>';
                 document.getElementById('stats').style.display = 'none';
                 document.getElementById('loadMoreContainer').style.display = 'none';
             }
 
-            try {
-                const searchParams = {
-                    q: query,
-                    limit: parseInt(limit),
-                    offset: currentOffset,
-                    attributesToHighlight: ['content'],
-                    highlightPreTag: '<mark>',
-                    highlightPostTag: '</mark>',
-                };
+            const startTime = performance.now();
 
-                // Add filter if folder selected
-                if (folder) {
-                    searchParams.filter = `folder = ${folder}`;
-                }
+            // Perform search
+            let results = fuse.search(query);
 
-                const headers = {
-                    'Content-Type': 'application/json',
-                };
-
-                if (MEILISEARCH_API_KEY) {
-                    headers['Authorization'] = `Bearer ${MEILISEARCH_API_KEY}`;
-                }
-
-                const response = await fetch(`${MEILISEARCH_HOST}/indexes/${INDEX_NAME}/search`, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify(searchParams)
-                });
-
-                const data = await response.json();
-                totalHits = data.estimatedTotalHits || data.hits.length;
-                displayResults(data, append);
-            } catch (error) {
-                document.getElementById('results').innerHTML = `
-                    <div class="result-item">
-                        <p style="color: red;">Error: ${error.message}</p>
-                        <p style="margin-top: 10px;">Make sure Meilisearch is running and accessible at ${MEILISEARCH_HOST}</p>
-                    </div>
-                `;
-                document.getElementById('loadMoreContainer').style.display = 'none';
+            // Filter by folder if selected
+            if (folder) {
+                results = results.filter(result => result.item.folder === folder);
             }
+
+            // Store all results for pagination
+            if (!append) {
+                currentSearchResults = results;
+            }
+
+            const endTime = performance.now();
+            const processingTime = Math.round(endTime - startTime);
+
+            // Prepare paginated results
+            const startIdx = currentOffset;
+            const endIdx = currentOffset + currentLimit;
+            const paginatedResults = currentSearchResults.slice(startIdx, endIdx);
+
+            displayResults({
+                hits: paginatedResults.map(r => r.item),
+                matches: paginatedResults.map(r => r.matches || []),
+                totalHits: currentSearchResults.length,
+                processingTime: processingTime
+            }, append);
         }
 
-        async function loadMore() {
+        function loadMore() {
             currentOffset += currentLimit;
-            await search(true);
+            search(true);
+        }
+
+        function highlightMatches(text, query) {
+            if (!query || !text) return escapeHtml(text);
+
+            // Simple highlighting: find all query terms and highlight them
+            const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+            let highlighted = escapeHtml(text);
+
+            terms.forEach(term => {
+                const regex = new RegExp(`(${escapeRegex(term)})`, 'gi');
+                highlighted = highlighted.replace(regex, '<mark>$1</mark>');
+            });
+
+            return highlighted;
+        }
+
+        function escapeRegex(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
         function displayResults(data, append = false) {
             const resultsDiv = document.getElementById('results');
             const statsDiv = document.getElementById('stats');
+            const query = document.getElementById('searchInput').value.trim();
 
             if (data.hits.length === 0 && !append) {
                 resultsDiv.innerHTML = '<p class="loading">No results found.</p>';
@@ -297,14 +367,14 @@
             // Show stats
             statsDiv.style.display = 'block';
             const currentDisplayed = currentOffset + data.hits.length;
-            statsDiv.innerHTML = `Showing ${currentDisplayed} of ${totalHits} results (${data.processingTimeMs}ms)`;
+            statsDiv.innerHTML = `Showing ${currentDisplayed} of ${data.totalHits} results (${data.processingTime}ms)`;
 
             // Store full content in a map for later access
             window.fullContentMap = window.fullContentMap || {};
 
             // Generate HTML for results
-            const resultsHTML = data.hits.map(hit => {
-                const content = hit._formatted?.content || hit.content;
+            const resultsHTML = data.hits.map((hit, idx) => {
+                const content = highlightMatches(hit.content, query);
                 const preview = content.substring(0, 500);
                 const needsExpand = content.length > 500;
 
@@ -316,11 +386,11 @@
                 return `
                     <div class="result-item">
                         <div class="result-header">
-                            <div class="result-title">${hit.document_id}</div>
+                            <div class="result-title">${escapeHtml(hit.document_id)}</div>
                             <div class="result-meta">
-                                <span>📁 ${hit.folder}</span>
+                                <span>📁 ${escapeHtml(hit.folder)}</span>
                                 <span>📄 Page ${hit.page_number}</span>
-                                ${hit.case_number ? `<span>⚖️ ${hit.case_number}</span>` : ''}
+                                ${hit.case_number ? `<span>⚖️ ${escapeHtml(hit.case_number)}</span>` : ''}
                             </div>
                         </div>
                         <div class="result-content" id="content-${hit.id}">
@@ -344,7 +414,7 @@
 
             // Show/hide Load More button
             const loadMoreContainer = document.getElementById('loadMoreContainer');
-            if (currentDisplayed < totalHits) {
+            if (currentDisplayed < data.totalHits) {
                 loadMoreContainer.style.display = 'block';
             } else {
                 loadMoreContainer.style.display = 'none';
