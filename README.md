@@ -1,6 +1,6 @@
 # Epstein Document Search
 
-A searchable database of Epstein court documents using Meilisearch for fast, full-text search capabilities.
+A searchable database of Epstein court documents using Meilisearch for fast, full-text search capabilities. Forked from https://github.com/paulgp/epstein-document-search
 
 ## Overview
 
@@ -20,11 +20,13 @@ This project processes court documents related to the Epstein case, extracts met
 ```
 .
 ├── website/
-│   └── index.html          # Web-based search interface
+│   └── index.html              # Web-based search interface
+│   └── documents.json          # Processed documents for serving (big, but not quite too big for GitHub)
 ├── prepare_for_meilisearch.py  # Process documents for indexing
-├── split_json.py           # Split large JSON files for upload
-├── house_dems.pdf          # Sample document
-└── house_dems.txt          # Extracted text from sample document
+├── split_json.py               # Split large JSON files for upload
+├── data/
+│   └── house_dems.pdf          # Sample document
+│   └── house_dems.txt          # Extracted text from sample document
 ```
 
 Note: The actual document folders (001/, 002/) and generated JSON files are excluded from git due to their size.
@@ -36,97 +38,41 @@ Note: The actual document folders (001/, 002/) and generated JSON files are excl
 
 ## Requirements
 
-- Python 3.6+
-- Meilisearch instance (cloud or self-hosted)
+- uv
 - Modern web browser
 
 ## Setup
 
 ### 1. Obtain Documents
 
-Download documents from the [Google Drive folder](https://drive.google.com/drive/folders/1TrGxDGQLDLZu1vvvZDBAh-e7wN3y6Hoz) and place the extracted court document `.txt` files in numbered folders (e.g., `001/`, `002/`).
+Download documents from the [Google Drive folder](https://drive.google.com/drive/folders/1TrGxDGQLDLZu1vvvZDBAh-e7wN3y6Hoz) and place the extracted court document `.txt` files in numbered folders (e.g., `001/`, `002/`) and place them in the `/data` folder.
 
 ### 2. Process Documents
 
 Run the preparation script to convert documents into Meilisearch-ready JSON:
 
 ```bash
-python3 prepare_for_meilisearch.py
+uv run python3 -m epstein_document_search.prepare PATH/TO/DOCUMENTS website/documents.json
 ```
 
 This will:
 - Scan all `.txt` files in the directory
 - Split documents by page
 - Extract metadata (case numbers, page numbers)
-- Generate `meilisearch_documents.json`
+- Generate `documents.json`
 
-### 3. Split Large JSON Files (if needed)
+### 3. Run Locally
 
-If your JSON file is too large for a single upload:
-
-```bash
-python3 split_json.py
-```
-
-This creates smaller chunks (`meilisearch_documents_part1.json`, etc.).
-
-### 4. Set Up Meilisearch
-
-You can either:
-
-**Option A: Cloud** (Easiest)
-- Sign up at [Meilisearch Cloud](https://www.meilisearch.com/cloud)
-- Create an index named `epstein`
-- Get your API keys
-
-**Option B: Self-Hosted**
-- Follow [Meilisearch installation guide](https://www.meilisearch.com/docs/learn/getting_started/installation)
-- Run: `./meilisearch --master-key="YOUR_MASTER_KEY"`
-
-### 5. Upload Documents
-
-Use the Meilisearch API or SDK to upload your JSON files:
+If you want to run locally, use
 
 ```bash
-curl -X POST 'http://localhost:7700/indexes/epstein/documents' \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
-  --data-binary @meilisearch_documents.json
+cd website
+uv run python3 -m http.server
 ```
 
-### 6. Configure Meilisearch Settings
+### 4. Push to GitHub Pages
 
-Set up searchable and filterable attributes:
-
-```bash
-# Searchable attributes
-curl -X PUT 'http://localhost:7700/indexes/epstein/settings/searchable-attributes' \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
-  --data '["content", "document_id", "case_number"]'
-
-# Filterable attributes
-curl -X PUT 'http://localhost:7700/indexes/epstein/settings/filterable-attributes' \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
-  --data '["folder", "page_number", "case_number"]'
-```
-
-### 7. Configure Website
-
-Edit `website/index.html` and update the configuration:
-
-```javascript
-const MEILISEARCH_HOST = 'https://your-instance.meilisearch.io';
-const MEILISEARCH_API_KEY = 'your-search-api-key'; // Use search-only key, NOT admin key
-const INDEX_NAME = 'epstein';
-```
-
-**Security Note:** Use a search-only API key (not your admin key) in the website to prevent unauthorized modifications.
-
-### 8. Open Website
-
-Open `website/index.html` in your browser to start searching!
+There is an included GitHub action that will push to a github pages instance. See `.github/workflows/deploy.yml`.
 
 ## Document Format
 
