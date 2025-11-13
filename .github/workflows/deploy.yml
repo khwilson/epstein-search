@@ -34,7 +34,6 @@ jobs:
         run: |
           mkdir -p _site
           cp -r website/* _site/
-          cp src/epstein_document_search/meilisearch_documents.json _site/documents.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
